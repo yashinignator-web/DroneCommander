@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Дрон — управление с телефона</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+        body { background: #0a0f1e; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: monospace; touch-action: none; }
+        .container { position: relative; width: 100%; max-width: 900px; background: #1a1f2e; border-radius: 32px; padding: 16px; box-shadow: 0 20px 35px rgba(0,0,0,0.5); }
+        canvas { display: block; width: 100%; background: #2a2f3e; border-radius: 20px; cursor: crosshair; touch-action: none; }
+        .panel { display: flex; justify-content: space-between; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
+        .stick { flex: 1; min-width: 140px; background: #0f1222; border-radius: 40px; padding: 12px; text-align: center; box-shadow: inset 0 0 8px #00000033, 0 8px 18px #0000004d; }
+        .stick p { color: #8f9bb5; font-size: 14px; margin-bottom: 10px; letter-spacing: 1px; }
+        .pad { width: 110px; height: 110px; background: #2c3147; border-radius: 999px; margin: 0 auto; box-shadow: 0 0 0 3px #4c5a7a, inset 0 0 0 2px #6e7eae; touch-action: none; }
+        .info { background: #0b0e18cc; backdrop-filter: blur(8px); border-radius: 80px; padding: 10px 18px; font-weight: bold; text-align: center; color: #b9e6ff; font-size: 15px; margin-top: 15px; border: 1px solid #2e3a5e; display: inline-block; width: auto; }
+        .flex-info { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+        @media (max-width: 600px) {
+            .stick { min-width: 110px; }
+            .pad { width: 80px; height: 80px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <canvas id="droneCanvas" width="800" height="550" style="width:100%; height:auto; background:radial-gradient(circle at 20% 30%, #3a4a6e, #1a2538)"></canvas>
+    <div class="panel">
+        <div class="stick"><p>🕹️ ЛЕВЫЙ — ДВИЖЕНИЕ</p><div id="leftPad" class="pad"></div></div>
+        <div class="stick"><p>🎮 ПРАВЫЙ — ВЫСОТА / ПОВОРОТ</p><div id="rightPad" class="pad"></div></div>
+    </div>
+    <div class="flex-info"><div class="info">⚡ СКОРОСТЬ: <span id="speedValue">0</span></div><div class="info">📐 ВЫСОТА: <span id="altValue">0</span> м</div><div class="info">🧭 УГОЛ: <span id="angleValue">0</span>°</div></div>
+</div>
+
+<script>
+    (function(){
+        // ---------- ДРОН ----------
+        const canvas = document.getElementById('droneCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        let drone = {
+            x: 400, y: 300,
+            angle: 0,        // градусы
+            speed: 0,
+            altitude: 100,
+            maxAlt: 350,
+            minAlt: 30
+        };
+        
+        let left = { x:0, y:0 };
+        let right = { x:0, y:0 };
+        
+        // ---------- ВИРТУАЛЬНЫЕ СТИКИ (РАБОТАЮТ НА ТЕЛЕФОНЕ И ПК) ----------
+        function initStick(stickId, callback) {
+            const element = document.getElementById(stickId);
+            if(!element) return;
+            
+            let active = false;
+            
+            const getCoords = (e) => {
+                const rect = element.getBoundingClientRect();
+                let clientX, clientY;
+                if(e.touches) {
+                    clientX = e.touches[0].clientX;
+                    clientY = e.touches[0].clientY;
+                } else {
+                    clientX = e.clientX;
+                    clientY = e.clientY;
+                }
+                let dx = (clientX - (rect.left + rect.width/2)) / (rect.width/2);
+                let dy = (clientY - (rect.top + rect.height/2)) / (rect.height/2);
+                dx = Math.min(1, Math.max(-1, dx));
+                dy = Math.min(1, Math.max(-1, dy));
+                callback(dx, dy);
+            };
+            
+            const onStart = (e) => {
+                active = true;
+                e.preventDefault();
+                getCoords(e);
+            };
+            
+            const onMove = (e) => {
+                if(!active) return;
+                e.preventDefault();
+                getCoords(e);
+            };
+            
+            const onEnd = (e) => {
+                active = false;
+                callback(0,0);
+                e.preventDefault();
+            };
+            
+            element.addEventListener('mousedown', onStart);
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onEnd);
+            element.addEventListener('touchstart', onStart, {passive:false});
+            window.addEventListener('touchmove', onMove, {passive:false});
+            window.addEventListener('touchend', onEnd);
+        }
+        
+        // Левый стик — задаёт скорость и угол поворота
+        initStick('leftPad', (x, y) => {
+            left.x = x;
+            left.y = y;
+            drone.speed = -y * 4.2;   // тяга вперёд/назад
+            if(Math.abs(x) > 0.15) drone.angle += x * 3.2;
+        });
+        
+        // Правый стик — высота + корректировка угла (дополнительно)
+        initStick('rightPad', (x, y) => {
+            right.x = x;
+            right.y = y;
+            let altDelta = -y * 2.6;
+            drone.altitude += altDelta;
+            drone.altitude = Math.min(drone.maxAlt, Math.max(drone.minAlt, drone.altitude));
+            if(Math.abs(x) > 0.12) drone.angle += x * 1.8;
+        });
+        
+        // ----- ФИЗИКА (движение с учётом угла) -----
+        function updatePhysics() {
+            let rad = drone.angle * Math.PI / 180;
+            if(Math.abs(drone.speed) > 0.05) {
+                drone.x += Math.cos(rad) * drone.speed;
+                drone.y += Math.sin(rad) * drone.speed;
+            }
+            // границы карты (холст 800x550)
+            drone.x = Math.min(760, Math.max(40, drone.x));
+            drone.y = Math.min(510, Math.max(40, drone.y));
+            drone.speed *= 0.98;   // затухание
+            if(Math.abs(drone.speed) < 0.05) drone.speed = 0;
+        }
+        
+        // ----- ОТРИСОВКА (дрон, тень, индикаторы)-----
+        function draw() {
+            ctx.clearRect(0, 0, 800, 550);
+            // земля (перспектива)
+            ctx.fillStyle = '#3e6b47';
+            ctx.beginPath();
+            ctx.rect(0, 430, 800, 120);
+            ctx.fill();
+            ctx.fillStyle = '#5e8c5a';
+            for(let i=0;i<30;i++) {
+                ctx.beginPath();
+                ctx.moveTo(i*50, 430);
+                ctx.lineTo(i*50+30, 480);
+                ctx.lineTo(i*50-30, 480);
+                ctx.fill();
+            }
+            // тень дрона
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#00000055';
+            ctx.beginPath();
+            ctx.ellipse(drone.x-5, drone.y+12, 18, 8, 0, 0, Math.PI*2);
+            ctx.fill();
+            // сам дрон
+            ctx.save();
+            ctx.translate(drone.x, drone.y);
+            ctx.rotate(drone.angle * Math.PI/180);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#ed7a4a';
+            ctx.beginPath();
+            ctx.rect(-20, -10, 40, 20);
+            ctx.fill();
+            ctx.fillStyle = '#b54a2a';
+            ctx.beginPath();
+            ctx.rect(-12, -18, 24, 8);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.rect(-12, 10, 24, 8);
+            ctx.fill();
+            // винты
+            ctx.fillStyle = '#aaccdd';
+            ctx.beginPath();
+            ctx.ellipse(-28, 0, 12, 5, 0, 0, Math.PI*2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(28, 0, 12, 5, 0, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = '#fa8232';
+            ctx.beginPath();
+            ctx.arc(0, 0, 6, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = '#ffc48a';
+            ctx.beginPath();
+            ctx.arc(0, 0, 3, 0, Math.PI*2);
+            ctx.fill();
+            ctx.restore();
+            
+            // индикаторы скорости и высоты
+            document.getElementById('speedValue').innerText = Math.abs(drone.speed).toFixed(1);
+            let altMeters = Math.floor((drone.altitude / drone.maxAlt) * 48);
+            document.getElementById('altValue').innerText = altMeters;
+            document.getElementById('angleValue').innerText = Math.floor(drone.angle%360);
+        }
+        
+        // ----- ЦИКЛ -----
+        function animate() {
+            updatePhysics();
+            draw();
+            requestAnimationFrame(animate);
+        }
+        
+        // проверка, чтобы при касаниях не скроллило страницу
+        window.addEventListener('touchmove', function(e) {
+            if(e.target.closest('.pad')) e.preventDefault();
+        }, { passive: false });
+        
+        animate();
+    })();
+</script>
+</body>
+</html>
