@@ -1701,25 +1701,8 @@ function createSmokeParticle(position) {
           loadScenarioList();
       };
     </script>
-    <script>
+<script>
 (function() {
-    console.log("Чиним числовые поля для телефона...");
-
-    // Ждем загрузки Blockly и редактора
-    function waitForBlockly() {
-        if (typeof Blockly !== 'undefined' && Blockly.getMainWorkspace()) {
-            fixAllNumberFields();
-            // Смотрим за новыми блоками
-            Blockly.getMainWorkspace().addChangeListener(function(event) {
-                if (event.type === Blockly.Events.BLOCK_CREATE) {
-                    setTimeout(fixAllNumberFields, 50);
-                }
-            });
-        } else {
-            setTimeout(waitForBlockly, 500);
-        }
-    }
-
     function fixAllNumberFields() {
         let workspace = Blockly.getMainWorkspace();
         if (!workspace) return;
@@ -1727,19 +1710,51 @@ function createSmokeParticle(position) {
         let allBlocks = workspace.getAllBlocks();
         allBlocks.forEach(function(block) {
             try {
-                // Ищем поля с числами
                 block.inputList.forEach(function(input) {
                     input.fieldRow.forEach(function(field) {
-                        // Если поле числовое, но тупит — пересоздаем принудительно
+                        // Если поле числовое — принудительно пересоздаём
                         if (field instanceof Blockly.FieldNumber) {
-                            var oldValue = field.getValue();
-                            var newField = new Blockly.FieldNumber(oldValue || 0, -9999, 9999, 0.1);
-                            field.setValue(newField.getValue()); // обновляем значение
+                            let oldValue = field.getValue();
+                            let newField = new Blockly.FieldNumber(oldValue || 1, -9999, 9999, 0.1);
+                            field.setValue(newField.getValue());
+                        }
+                        
+                        // Если поле выпадающий список с цифрами — заменяем на числовое
+                        if (field instanceof Blockly.FieldDropdown) {
+                            let options = field.getOptions();
+                            if (options.length > 0 && !isNaN(parseFloat(options[0][0]))) {
+                                let oldValue = field.getValue();
+                                let newField = new Blockly.FieldNumber(parseFloat(oldValue) || 1, -9999, 9999, 0.1);
+                                try {
+                                    block.removeInput(input.name);
+                                    let newInput = block.appendDummyInput(input.name);
+                                    newInput.appendField(newField, field.name);
+                                    input.fieldRow.forEach(f => {
+                                        if (f instanceof Blockly.FieldLabel) {
+                                            newInput.appendField(f.getText());
+                                        }
+                                    });
+                                } catch(e) { console.warn(e); }
+                            }
                         }
                     });
                 });
             } catch(e) { console.warn(e); }
         });
+    }
+
+    function waitForBlockly() {
+        if (typeof Blockly !== 'undefined' && Blockly.getMainWorkspace()) {
+            console.log("Blockly loaded, fixing fields...");
+            fixAllNumberFields();
+            Blockly.getMainWorkspace().addChangeListener(function(event) {
+                if (event.type === Blockly.Events.BLOCK_CREATE) {
+                    setTimeout(fixAllNumberFields, 100);
+                }
+            });
+        } else {
+            setTimeout(waitForBlockly, 500);
+        }
     }
 
     waitForBlockly();
