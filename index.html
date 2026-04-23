@@ -1701,5 +1701,49 @@ function createSmokeParticle(position) {
           loadScenarioList();
       };
     </script>
+    <script>
+(function() {
+    console.log("Чиним числовые поля для телефона...");
+
+    // Ждем загрузки Blockly и редактора
+    function waitForBlockly() {
+        if (typeof Blockly !== 'undefined' && Blockly.getMainWorkspace()) {
+            fixAllNumberFields();
+            // Смотрим за новыми блоками
+            Blockly.getMainWorkspace().addChangeListener(function(event) {
+                if (event.type === Blockly.Events.BLOCK_CREATE) {
+                    setTimeout(fixAllNumberFields, 50);
+                }
+            });
+        } else {
+            setTimeout(waitForBlockly, 500);
+        }
+    }
+
+    function fixAllNumberFields() {
+        let workspace = Blockly.getMainWorkspace();
+        if (!workspace) return;
+
+        let allBlocks = workspace.getAllBlocks();
+        allBlocks.forEach(function(block) {
+            try {
+                // Ищем поля с числами
+                block.inputList.forEach(function(input) {
+                    input.fieldRow.forEach(function(field) {
+                        // Если поле числовое, но тупит — пересоздаем принудительно
+                        if (field instanceof Blockly.FieldNumber) {
+                            var oldValue = field.getValue();
+                            var newField = new Blockly.FieldNumber(oldValue || 0, -9999, 9999, 0.1);
+                            field.setValue(newField.getValue()); // обновляем значение
+                        }
+                    });
+                });
+            } catch(e) { console.warn(e); }
+        });
+    }
+
+    waitForBlockly();
+})();
+</script>
   </body>
 </html>
